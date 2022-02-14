@@ -1,0 +1,28 @@
+let
+  // define the body of the call to the authentication URL
+  body = "grant_type=password&resource=https://analysis.windows.net/powerbi/api&client_id=c87bcc33-0c2b-409f-a8e7-1216bfe67d10&username=<user name>&password=<password>",
+  // make the web call using the body
+  Data = Json.Document(Web.Contents("https://login.microsoftonline.com/common/oauth2/token/", [Headers=[#"Content-Type"="application/x-www-form-urlencoded"], Content=Text.ToBinary(body)])),
+  define the access token
+  access_token = Data[access_token],
+  // define the source for the list of reports
+  reportSource = AzureStorage.DataLake("https://dpieimdata.dfs.core.windows.net/powerbi/CS%20DIO%20Data%20Analytics/Power%20BI%20Reference%20Data/Reports/Reports.csv.snapshots/"),
+  // select the latest CSV file from ADLS
+  #"Filtered rows" = Table.SelectRows(reportSource, let latest = List.Max(reportSource[Date modified]) in each [Date modified] = latest),
+  // Remove content column
+  #"Removed other columns" = Table.SelectColumns(#"Filtered rows", {"Content"}),
+  // Add data column for the contents
+  #"Add data column" = Table.AddColumn(#"Removed other columns", "Data", each Csv.Document([Content])),
+  // Remove content column
+  #"Removed columns" = Table.RemoveColumns(#"Add data column", {"Content"}),
+  // Expand contents column
+  #"Expanded Data" = Table.ExpandTableColumn(#"Removed columns", "Data", {"Column1", "Column2"}, {"Column1", "Column2"}),
+  #"Renamed columns" = Table.RenameColumns(#"Expanded Data", {{"Column1", "Workspace Id"}, {"Column2", "Report Id"}}),
+  reportList = #"Renamed columns",
+  // Invoke function to retrieve the access permissions
+  #"Invoked custom function" = Table.AddColumn(reportList, "Invoked custom function", each fn_GetReportUsers("reports", [Report Id], access_token)),
+  #"Expanded Invoked custom function" = Table.ExpandListColumn(#"Invoked custom function", "Invoked custom function"),
+  #"Expanded Invoked custom function 1" = Table.ExpandRecordColumn(#"Expanded Invoked custom function", "Invoked custom function", {"reportUserAccessRight", "emailAddress", "displayName", "identifier", "graphId", "principalType"}, {"reportUserAccessRight", "emailAddress", "displayName", "identifier", "graphId", "principalType"}),
+  #"Changed column type" = Table.TransformColumnTypes(#"Expanded Invoked custom function 1", {{"Workspace Id", type text}, {"Report Id", type text}, {"reportUserAccessRight", type text}, {"emailAddress", type text}, {"displayName", type text}, {"identifier", type text}, {"graphId", type text}, {"principalType", type text}})
+in
+  #"Changed column type"
